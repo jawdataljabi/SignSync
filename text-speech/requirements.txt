@@ -1,3 +1,4 @@
 pyvirtualcam
 pyttsx3
 numpy
+openai

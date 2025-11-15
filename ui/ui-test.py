@@ -11,6 +11,7 @@ import threading
 # Add text-speech directory to path to import tts module
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'text-speech'))
 from tts import speak_text, get_voice_id, find_vb_audio_device
+from openai_client import get_client
 
 
 class MainWindow(QWidget):
@@ -24,8 +25,10 @@ class MainWindow(QWidget):
         # Store current selections
         self.current_voice_index = 0  # Default to "Man" (index 0)
         self.current_speed = "1x"  # Default speed
+        self.current_nlp_model = "gpt-4o-mini"  # Default NLP model
         self.voice_dropdown = None
         self.speed_dropdown = None
+        self.nlp_dropdown = None
         self.current_voice_id = None  # Will be initialized
         self.cable_in_device_index = None  # Will be initialized if available
         self.use_cable_in_for_sample = False  # Track if voice sample should use CABLE In
@@ -34,6 +37,9 @@ class MainWindow(QWidget):
         
         # Initialize TTS after UI is set up
         self.initialize_tts()
+        
+        # Initialize NLP after UI is set up
+        self.initialize_nlp()
 
     def init_ui(self):
         layout = QVBoxLayout()
@@ -73,7 +79,8 @@ class MainWindow(QWidget):
 
 
 
-        nlp_layout, _ = self.create_dropdown("NLP interpreter", ["None", "GPT-5"], self.on_nlp_changed)
+        nlp_layout, self.nlp_dropdown = self.create_dropdown("NLP interpreter", ["None", "gpt-3.5-turbo", "gpt-4o-mini"], self.on_nlp_changed)
+        self.nlp_dropdown.setCurrentText("gpt-4o-mini")  # Default to gpt-4o-mini
         layout.addLayout(nlp_layout)
 
         layout.addItem(QSpacerItem(20, 40, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding))
@@ -117,6 +124,18 @@ class MainWindow(QWidget):
 
     def on_nlp_changed(self, value):
         print("Selected NLP model:", value)
+        # Map dropdown value to model name (or None if "None" is selected)
+        if value == "None":
+            self.current_nlp_model = None
+        else:
+            self.current_nlp_model = value
+        print(f"Current NLP model set to: {self.current_nlp_model}")
+    
+    def get_nlp_model(self):
+        """Get the current NLP model, defaulting to 'gpt-4o-mini' if None."""
+        if self.current_nlp_model is None:
+            return "gpt-4o-mini"
+        return self.current_nlp_model
 
     def initialize_tts(self):
         """Initialize TTS by getting the voice ID for the current voice selection."""
@@ -132,6 +151,20 @@ class MainWindow(QWidget):
             self.cable_in_device_index = None
         
         print("TTS initialized")
+    
+    def initialize_nlp(self):
+        """Initialize NLP by checking OpenAI API key and creating client."""
+        print("Initializing NLP...")
+        try:
+            # Try to get the client (will check for API key)
+            client = get_client()
+            print("NLP initialized successfully - OpenAI API key found")
+        except ValueError as e:
+            print(f"NLP initialization warning: {e}")
+            print("NLP features will not be available until OPENAI_API_KEY is set")
+        except Exception as e:
+            print(f"NLP initialization error: {e}")
+        print("NLP initialization complete")
 
     def update_voice_id(self):
         """Update the voice ID based on the current voice index."""

@@ -12,6 +12,32 @@ _voice_id = None
 # Using a clear structure to separate instruction from user input
 PROMPT_PREFIX = "You are a text clarity assistant. Your task is to rewrite the user's sentence to be clearer and more understandable. Respond with exactly one improved sentence, nothing else.\n\nUser's sentence to rewrite: "
 
+# Valid OpenAI models
+VALID_MODELS = {
+    "gpt-5.1",
+    "gpt-5.1-mini",
+    "gpt-4.1",
+    "gpt-4.1-mini",
+    "gpt-4o",
+    "gpt-4o-mini",
+    "o1",
+    "o1-mini"
+}
+
+
+def is_valid_model(model):
+    """Check if the provided model is a valid OpenAI model.
+    
+    Args:
+        model: Model name to validate
+        
+    Returns:
+        True if valid, False otherwise
+    """
+    if model is None:
+        return False
+    return model in VALID_MODELS
+
 
 def get_client(api_key=None):
     """Get or create an OpenAI client instance.
@@ -32,46 +58,15 @@ def get_client(api_key=None):
     return _client
 
 
-def send_prompt(prompt, model="gpt-3.5-turbo", temperature=0.7, system_message=None):
-    """Send a prompt to OpenAI and receive the response as a string.
-    
-    Args:
-        prompt: The user's prompt/question as a string
-        model: Model to use (default: "gpt-3.5-turbo")
-        temperature: Sampling temperature 0.0-2.0 (default: 0.7)
-        system_message: Optional system message to set context
-    
-    Returns:
-        Response string from OpenAI
-    """
-    client = get_client()
-    
-    messages = []
-    if system_message:
-        messages.append({"role": "system", "content": system_message})
-    # Prepend the prompt with the instruction prefix
-    prefixed_prompt = PROMPT_PREFIX + prompt
-    messages.append({"role": "user", "content": prefixed_prompt})
-    
-    response = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        temperature=temperature
-    )
-    
-    return response.choices[0].message.content
-
-
-def send_prompt_and_speak_streaming(prompt, model="gpt-4o-mini", temperature=0.7, system_message=None, voice_index=1, min_chunk_length=10, sapi_device_index=None):
+def send_prompt_and_speak_streaming(prompt, model="gpt-4o-mini", temperature=0.7, system_message=None, voice_index=1, sapi_device_index=None):
     """Send a prompt to OpenAI with streaming, collect the full response, then speak it all at once.
     
     Args:
         prompt: The user's prompt/question as a string
-        model: Model to use (default: "gpt-4o-mini")
+        model: Model to use (default: "gpt-4o-mini"). If None or invalid, defaults to "gpt-4o-mini"
         temperature: Sampling temperature 0.0-2.0 (default: 0.7)
         system_message: Optional system message to set context
         voice_index: Voice index to use for TTS (default: 1)
-        min_chunk_length: Deprecated parameter, kept for backward compatibility (not used)
         sapi_device_index: SAPI audio output device index (default: None, uses system default)
     
     Returns:
@@ -81,8 +76,17 @@ def send_prompt_and_speak_streaming(prompt, model="gpt-4o-mini", temperature=0.7
             - 'api_to_speech_start_ms': Time from API call to when speaking starts
             - 'speaking_total_ms': Total time spent speaking
             - 'function_total_ms': Total function execution time)
+    
+    Raises:
+        ValueError: If the model is invalid and cannot be defaulted
     """
     global _voice_id
+    
+    # Validate and default model if necessary
+    if model is None or not is_valid_model(model):
+        if model is not None:
+            print(f"Warning: Invalid model '{model}', defaulting to 'gpt-4o-mini'")
+        model = "gpt-4o-mini"
     
     # Start comprehensive timing
     api_call_start = time.time()
