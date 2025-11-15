@@ -28,6 +28,7 @@ class MainWindow(QWidget):
         self.speed_dropdown = None
         self.current_voice_id = None  # Will be initialized
         self.cable_in_device_index = None  # Will be initialized if available
+        self.use_cable_in_for_sample = False  # Track if voice sample should use CABLE In
 
         self.init_ui()
         
@@ -53,10 +54,19 @@ class MainWindow(QWidget):
         self.voice_sample_button.clicked.connect(self.play_voice_sample)
         self.voice_sample_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
+        # External Play Button (appears in LIVE mode)
+        self.external_play_button = QPushButton("External Play")
+        self.external_play_button.setFixedHeight(30)
+        self.external_play_button.setFixedWidth(150)
+        self.external_play_button.setObjectName("external_play_button")
+        self.external_play_button.clicked.connect(self.toggle_external_play)
+        self.external_play_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.external_play_button.hide()  # Hidden by default
 
         button_layout = QHBoxLayout()
         button_layout.addStretch()
         button_layout.addWidget(self.voice_sample_button)
+        button_layout.addWidget(self.external_play_button)
 
         layout.addLayout(button_layout)
 
@@ -175,9 +185,17 @@ class MainWindow(QWidget):
         # Speak the sample text in a separate thread to avoid event loop conflicts
         sample_text = "this is a test voice sample"
         
+        # Determine which device to use
+        device_index = None
+        if self.use_cable_in_for_sample and self.cable_in_device_index is not None:
+            device_index = self.cable_in_device_index
+            print("Playing voice sample through CABLE In")
+        else:
+            print("Playing voice sample through system default")
+        
         def speak_in_thread():
             try:
-                speak_text(sample_text, rate=rate, voice_id=voice_id)
+                speak_text(sample_text, rate=rate, voice_id=voice_id, sapi_device_index=device_index)
             except Exception as e:
                 print(f"Error speaking: {e}")
         
@@ -197,6 +215,17 @@ class MainWindow(QWidget):
         # Otherwise use system default (None)
         return None
 
+    def toggle_external_play(self):
+        """Toggle whether voice sample should play through CABLE In or system default."""
+        self.use_cable_in_for_sample = not self.use_cable_in_for_sample
+        
+        if self.use_cable_in_for_sample:
+            self.external_play_button.setText("External Play: ON")
+            print("Voice sample set to play through CABLE In")
+        else:
+            self.external_play_button.setText("External Play: OFF")
+            print("Voice sample set to play through system default")
+
     def toggle_start_button(self):
         print("toggling start button")
         if self.start_button.isStart:
@@ -206,6 +235,11 @@ class MainWindow(QWidget):
                 print(f"Switched to LIVE mode - will use CABLE In device (index {self.cable_in_device_index})")
             else:
                 print("Switched to LIVE mode - CABLE In not available, using system default")
+            
+            # Show external play button
+            self.external_play_button.show()
+            self.external_play_button.setText("External Play: OFF")
+            self.use_cable_in_for_sample = False
             
             # Speak "SignSync initialized" on CABLE In
             if self.cable_in_device_index is not None and self.current_voice_id is not None:
@@ -226,6 +260,10 @@ class MainWindow(QWidget):
             self.start_button.setObjectName("start_button")
             self.start_button.setText("START")
             print("Switched to START mode - using system default audio")
+            
+            # Hide external play button
+            self.external_play_button.hide()
+            self.use_cable_in_for_sample = False
             
             # Speak "SignSync off" on CABLE In
             if self.cable_in_device_index is not None and self.current_voice_id is not None:
