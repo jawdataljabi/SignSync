@@ -1,7 +1,7 @@
 import os
 import time
 from openai import OpenAI
-from tts import speak_text, get_voice_id
+from tts import speak_text, get_voice_id, list_sapi_devices
 
 # Global client instance (initialized on first use)
 _client = None
@@ -180,6 +180,32 @@ def main():
     print("Initializing TTS voice...")
     if _voice_id is None:
         _voice_id = get_voice_id(1)
+    
+    # Prompt for SAPI device selection
+    sapi_device_index = None
+    sapi_devices = list_sapi_devices()
+    
+    if sapi_devices:
+        print("\nSelect SAPI audio output device:")
+        print("  Enter device number (e.g., '0', '1', '2')")
+        print("  Or press Enter to use default device")
+        device_choice = input("Device index (or Enter for default): ").strip()
+        
+        if device_choice:
+            try:
+                device_index = int(device_choice)
+                if 0 <= device_index < len(sapi_devices):
+                    sapi_device_index = device_index
+                    print(f"Selected: [{device_index}] {sapi_devices[device_index][2]}")
+                else:
+                    print(f"Invalid device number, using default device")
+            except ValueError:
+                print(f"Invalid input, using default device")
+        else:
+            print("Using default SAPI audio device")
+    else:
+        print("SAPI device selection not available (comtypes not installed), using default")
+    
     print("Ready! Enter prompts to benchmark (type 'exit' to quit)\n")
     
     while True:
@@ -200,7 +226,8 @@ def main():
             
             response, timing = send_prompt_and_speak_streaming(
                 prompt,
-                voice_index=1  # Voice already initialized, but pass for consistency
+                voice_index=1,  # Voice already initialized, but pass for consistency
+                sapi_device_index=sapi_device_index
             )
             
             # Display timing results
