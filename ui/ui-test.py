@@ -2,11 +2,12 @@ from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QSpacerItem, QSizePolicy
 )
-from PyQt6.QtGui import QIcon
-from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QIcon, QFontMetrics, QFont
+from PyQt6.QtCore import Qt, QPoint, QRect
 import sys
 import os
 import threading
+from qt_material import apply_stylesheet
 
 if sys.platform == "win32":
     try:
@@ -25,13 +26,43 @@ from openai_client import get_client
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
-
+        
+        # Set frameless window
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        
         self.setWindowTitle("Sign Sync")
-        self.setMinimumWidth(350)
+        self.drag_position = QPoint()
+        self.resize_border_width = 8  # Width of the resize border
+        self.is_resizing = False
+        self.resize_edge = None  # 'top', 'bottom', 'left', 'right', 'topLeft', 'topRight', 'bottomLeft', 'bottomRight'
         # Get the directory where this script is located
         script_dir = os.path.dirname(os.path.abspath(__file__))
         icon_path = os.path.join(script_dir, "mini_logo.ico")
         self.setWindowIcon(QIcon(icon_path))
+        
+        # Calculate dynamic minimum width and height based on font metrics
+        font_metrics = QFontMetrics(self.font())
+        min_width = max(
+            font_metrics.horizontalAdvance("NLP interpreter") + font_metrics.horizontalAdvance("gpt-4o-mini") + 150,
+            font_metrics.horizontalAdvance("Hear Voice Sample") + font_metrics.horizontalAdvance("External Play: ON") + 150,
+            400  # Absolute minimum
+        )
+        # Calculate minimum height based on content
+        min_height = max(
+            int(font_metrics.height() * 15),  # Rough estimate for all elements
+            250  # Absolute minimum
+        )
+        self.setMinimumWidth(int(min_width))
+        self.setMinimumHeight(min_height)
+        
+        # Allow the window to resize both horizontally and vertically
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        
+        # Store base font size for dynamic scaling
+        self.base_font_size = self.font().pointSize() if self.font().pointSize() > 0 else 10
+        self.base_width = 400  # Reference width for font scaling
+        self.base_height = 500  # Reference height for font scaling
+        self.main_layout = None  # Will be set in init_ui
 
         # Store current selections
         self.current_voice_index = 0  # Default to "Man" (index 0)
@@ -54,31 +85,93 @@ class MainWindow(QWidget):
 
     def init_ui(self):
         layout = QVBoxLayout()
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(20)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        
+        # Top bar with logo, title, and close button
+        top_bar = QHBoxLayout()
+        top_bar.setContentsMargins(10, 5, 0, 5)
+        top_bar.setSpacing(10)
+        
+        # Logo and title on the left
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        icon_path = os.path.join(script_dir, "mini_logo.ico")
+        if os.path.exists(icon_path):
+            logo_label = QLabel()
+            logo_label.setPixmap(QIcon(icon_path).pixmap(24, 24))
+            top_bar.addWidget(logo_label)
+        
+        title_label = QLabel("Sign Sync")
+        title_label.setObjectName("title_label")
+        top_bar.addWidget(title_label)
+        
+        top_bar.addStretch()
+        
+        # Close button
+        self.close_button = QPushButton("✕")
+        self.close_button.setFixedSize(26, 26)
+        self.close_button.setObjectName("close_button")
+        self.close_button.clicked.connect(self.close)
+        # Force red color directly on button
+        self.close_button.setStyleSheet("""
+            QPushButton#close_button {
+                background-color: transparent;
+                border: none;
+                color: #e74c3c;
+                font-size: 21px;
+                font-weight: bold;
+                padding: 0px;
+            }
+            QPushButton#close_button:hover {
+                background-color: #c0392b;
+                color: #ffffff;
+            }
+        """)
+        top_bar.addWidget(self.close_button)
+        
+        layout.addLayout(top_bar)
+        
+        # Main content layout
+        content_layout = QVBoxLayout()
+        self.main_layout = content_layout  # Store reference for dynamic updates
+        # Calculate font metrics once for all dynamic sizing
+        font_metrics = QFontMetrics(self.font())
+        
+        # Dynamic margins and spacing based on font size
+        self.base_margin = max(15, int(font_metrics.height() * 0.8))
+        self.base_spacing = max(10, int(font_metrics.height() * 0.6))
+        content_layout.setContentsMargins(self.base_margin, self.base_margin, self.base_margin, self.base_margin)
+        content_layout.setSpacing(self.base_spacing)
 
         voice_layout, self.voice_dropdown = self.create_dropdown("Voice:", ["Man", "Woman"], self.on_voice_changed)
-        layout.addLayout(voice_layout)
+        content_layout.addLayout(voice_layout)
         
         speed_layout, self.speed_dropdown = self.create_dropdown("Speed:", ["0.5x", "1x", "1.5x", "2x"], self.on_speed_changed)
         self.speed_dropdown.setCurrentText("1x")
-        layout.addLayout(speed_layout)
+        content_layout.addLayout(speed_layout)
                 
        # Hear Voice Sample Button
         self.voice_sample_button = QPushButton("Hear Voice Sample")
-        self.voice_sample_button.setFixedHeight(30)
-        self.voice_sample_button.setFixedWidth(150)
+        button_height = max(30, int(font_metrics.height() * 1.8))
+        # Calculate width based on text content with padding
+        button_width = max(120, int(font_metrics.horizontalAdvance("Hear Voice Sample") * 1.3))
+        self.voice_sample_button.setMinimumHeight(button_height)
+        self.voice_sample_button.setMinimumWidth(button_width)
         self.voice_sample_button.setObjectName("voice_sample_button")
         self.voice_sample_button.clicked.connect(self.play_voice_sample)
-        self.voice_sample_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        # Allow vertical expansion when window is resized
+        self.voice_sample_button.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Expanding)
 
         # External Play Button (appears in LIVE mode)
         self.external_play_button = QPushButton("External Play")
-        self.external_play_button.setFixedHeight(30)
-        self.external_play_button.setFixedWidth(150)
+        # Use same height as voice sample button for consistency
+        external_button_width = max(120, int(font_metrics.horizontalAdvance("External Play: ON") * 1.3))
+        self.external_play_button.setMinimumHeight(button_height)
+        self.external_play_button.setMinimumWidth(external_button_width)
         self.external_play_button.setObjectName("external_play_button")
         self.external_play_button.clicked.connect(self.toggle_external_play)
-        self.external_play_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        # Allow vertical expansion when window is resized
+        self.external_play_button.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Expanding)
         self.external_play_button.hide()  # Hidden by default
 
         button_layout = QHBoxLayout()
@@ -86,33 +179,231 @@ class MainWindow(QWidget):
         button_layout.addWidget(self.voice_sample_button)
         button_layout.addWidget(self.external_play_button)
 
-        layout.addLayout(button_layout)
+        content_layout.addLayout(button_layout)
 
 
 
         nlp_layout, self.nlp_dropdown = self.create_dropdown("NLP interpreter", ["None", "gpt-3.5-turbo", "gpt-4o-mini"], self.on_nlp_changed)
         self.nlp_dropdown.setCurrentText("gpt-4o-mini")  # Default to gpt-4o-mini
-        layout.addLayout(nlp_layout)
+        content_layout.addLayout(nlp_layout)
 
-        layout.addItem(QSpacerItem(20, 40, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding))
+        # Dynamic spacer based on font size
+        spacer_height = max(20, int(font_metrics.height() * 2))
+        content_layout.addItem(QSpacerItem(int(font_metrics.height()), spacer_height, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding))
 
         self.start_button = QPushButton("START")
-        self.start_button.setFixedHeight(50)
+        # Dynamic button height based on font size
+        start_button_height = max(40, int(font_metrics.height() * 2.5))
+        self.start_button.setMinimumHeight(start_button_height)
         self.start_button.setObjectName("start_button")
         self.start_button.isStart = True
         self.start_button.clicked.connect(self.toggle_start_button)
+        # Allow vertical expansion when window is resized
+        self.start_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        layout.addWidget(self.start_button)
+        content_layout.addWidget(self.start_button)
+        
+        # Add content layout to main layout
+        layout.addLayout(content_layout)
 
         self.setLayout(layout)
+
+    def showEvent(self, event):
+        """Capture initial window size when first shown."""
+        super().showEvent(event)
+        if not hasattr(self, '_initial_size_set'):
+            # Update base dimensions with actual window size
+            self.base_width = max(self.width(), self.base_width)
+            self.base_height = max(self.height(), self.base_height)
+            self._initial_size_set = True
+    
+    def resizeEvent(self, event):
+        """Handle window resize to scale fonts dynamically."""
+        super().resizeEvent(event)
+        # Only scale if we have initial size set
+        if hasattr(self, '_initial_size_set') and self._initial_size_set:
+            self.update_font_sizes()
+    
+    def update_font_sizes(self):
+        """Update font sizes, margins, and spacing for all widgets based on window size."""
+        if not hasattr(self, 'base_font_size') or not hasattr(self, 'base_width'):
+            return
+            
+        # Calculate scale factor based on window size
+        # Use geometric mean of width and height for more balanced scaling
+        current_width = self.width()
+        current_height = self.height()
+        
+        if current_width <= 0 or current_height <= 0:
+            return
+        
+        # Calculate scale factors
+        width_scale = current_width / self.base_width if self.base_width > 0 else 1.0
+        height_scale = current_height / self.base_height if self.base_height > 0 else 1.0
+        
+        # Use geometric mean for more balanced scaling that matches button expansion
+        scale_factor = (width_scale * height_scale) ** 0.5
+        
+        # Allow more aggressive scaling to match button expansion
+        scale_factor = min(scale_factor, 3.0)  # Cap at 3x to prevent too large fonts
+        scale_factor = max(scale_factor, 0.6)  # Minimum 0.6x to prevent too small fonts
+        
+        # Calculate new font size - scale more aggressively
+        new_font_size = int(self.base_font_size * scale_factor)
+        new_font_size = max(8, min(new_font_size, 72))  # Clamp between 8 and 72
+        
+        # Create new font with scaled size
+        new_font = QFont(self.font())
+        new_font.setPointSize(new_font_size)
+        
+        # Apply font to all widgets recursively
+        self.apply_font_to_widget(self, new_font)
+        
+        # Update margins and spacing proportionally
+        if hasattr(self, 'main_layout') and self.main_layout:
+            new_margin = int(self.base_margin * scale_factor)
+            new_spacing = int(self.base_spacing * scale_factor)
+            self.main_layout.setContentsMargins(new_margin, new_margin, new_margin, new_margin)
+            self.main_layout.setSpacing(new_spacing)
+    
+    def apply_font_to_widget(self, widget, font):
+        """Recursively apply font to widget and all its children."""
+        widget.setFont(font)
+        for child in widget.findChildren(QWidget):
+            child.setFont(font)
+    
+    def get_resize_edge(self, pos):
+        """Determine which edge the mouse is near."""
+        x, y = pos.x(), pos.y()
+        width, height = self.width(), self.height()
+        border = self.resize_border_width
+        
+        # Check corners first
+        if x < border and y < border:
+            return 'topLeft'
+        elif x >= width - border and y < border:
+            return 'topRight'
+        elif x < border and y >= height - border:
+            return 'bottomLeft'
+        elif x >= width - border and y >= height - border:
+            return 'bottomRight'
+        # Check edges
+        elif x < border:
+            return 'left'
+        elif x >= width - border:
+            return 'right'
+        elif y < border:
+            return 'top'
+        elif y >= height - border:
+            return 'bottom'
+        return None
+    
+    def get_cursor_for_edge(self, edge):
+        """Get the appropriate cursor for the resize edge."""
+        cursors = {
+            'top': Qt.CursorShape.SizeVerCursor,
+            'bottom': Qt.CursorShape.SizeVerCursor,
+            'left': Qt.CursorShape.SizeHorCursor,
+            'right': Qt.CursorShape.SizeHorCursor,
+            'topLeft': Qt.CursorShape.SizeFDiagCursor,
+            'topRight': Qt.CursorShape.SizeBDiagCursor,
+            'bottomLeft': Qt.CursorShape.SizeBDiagCursor,
+            'bottomRight': Qt.CursorShape.SizeFDiagCursor,
+        }
+        return cursors.get(edge, Qt.CursorShape.ArrowCursor)
+    
+    def mousePressEvent(self, event):
+        """Handle mouse press for window dragging and resizing."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            pos = event.position().toPoint()
+            edge = self.get_resize_edge(pos)
+            
+            if edge:
+                self.is_resizing = True
+                self.resize_edge = edge
+                self.drag_position = event.globalPosition().toPoint()
+                self.resize_start_geometry = self.geometry()
+            else:
+                self.is_resizing = False
+                self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+    
+    def mouseMoveEvent(self, event):
+        """Handle mouse move for window dragging and resizing."""
+        pos = event.position().toPoint()
+        
+        if not self.is_resizing:
+            # Update cursor based on edge proximity
+            edge = self.get_resize_edge(pos)
+            if edge:
+                self.setCursor(self.get_cursor_for_edge(edge))
+            else:
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+            
+            # Handle dragging
+            if event.buttons() == Qt.MouseButton.LeftButton and self.drag_position:
+                self.move(event.globalPosition().toPoint() - self.drag_position)
+        else:
+            # Handle resizing
+            if event.buttons() == Qt.MouseButton.LeftButton and self.resize_edge:
+                delta = event.globalPosition().toPoint() - self.drag_position
+                geom = self.resize_start_geometry
+                
+                if self.resize_edge == 'left':
+                    new_width = max(self.minimumWidth(), geom.width() - delta.x())
+                    new_x = geom.x() + (geom.width() - new_width)
+                    self.setGeometry(new_x, geom.y(), new_width, geom.height())
+                elif self.resize_edge == 'right':
+                    new_width = max(self.minimumWidth(), geom.width() + delta.x())
+                    self.setGeometry(geom.x(), geom.y(), new_width, geom.height())
+                elif self.resize_edge == 'top':
+                    new_height = max(self.minimumHeight(), geom.height() - delta.y())
+                    new_y = geom.y() + (geom.height() - new_height)
+                    self.setGeometry(geom.x(), new_y, geom.width(), new_height)
+                elif self.resize_edge == 'bottom':
+                    new_height = max(self.minimumHeight(), geom.height() + delta.y())
+                    self.setGeometry(geom.x(), geom.y(), geom.width(), new_height)
+                elif self.resize_edge == 'topLeft':
+                    new_width = max(self.minimumWidth(), geom.width() - delta.x())
+                    new_height = max(self.minimumHeight(), geom.height() - delta.y())
+                    new_x = geom.x() + (geom.width() - new_width)
+                    new_y = geom.y() + (geom.height() - new_height)
+                    self.setGeometry(new_x, new_y, new_width, new_height)
+                elif self.resize_edge == 'topRight':
+                    new_width = max(self.minimumWidth(), geom.width() + delta.x())
+                    new_height = max(self.minimumHeight(), geom.height() - delta.y())
+                    new_y = geom.y() + (geom.height() - new_height)
+                    self.setGeometry(geom.x(), new_y, new_width, new_height)
+                elif self.resize_edge == 'bottomLeft':
+                    new_width = max(self.minimumWidth(), geom.width() - delta.x())
+                    new_height = max(self.minimumHeight(), geom.height() + delta.y())
+                    new_x = geom.x() + (geom.width() - new_width)
+                    self.setGeometry(new_x, geom.y(), new_width, new_height)
+                elif self.resize_edge == 'bottomRight':
+                    new_width = max(self.minimumWidth(), geom.width() + delta.x())
+                    new_height = max(self.minimumHeight(), geom.height() + delta.y())
+                    self.setGeometry(geom.x(), geom.y(), new_width, new_height)
+        
+        event.accept()
+    
+    def mouseReleaseEvent(self, event):
+        """Handle mouse release to stop resizing/dragging."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.is_resizing = False
+            self.resize_edge = None
+            self.drag_position = QPoint()
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+        event.accept()
 
     def create_dropdown(self, label_text, items, callback):
         layout = QHBoxLayout()
 
         label = QLabel(label_text)
+        label.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
         dropdown = QComboBox()
         dropdown.addItems(items)
         dropdown.currentTextChanged.connect(callback)
+        dropdown.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         layout.addWidget(label)
         layout.addWidget(dropdown)
@@ -344,10 +635,37 @@ if __name__ == "__main__":
         icon = QIcon(icon_path)
         app.setWindowIcon(icon)
 
-    with open("style.qss", "r") as f:
-        app.setStyleSheet(f.read())
+    # Apply qt_material dark_red theme
+    apply_stylesheet(app, theme="dark_red.xml")
     
     window = MainWindow()
+    
+    # Override background to jet black and set soft grey text
+    window.setStyleSheet("""
+        QWidget {
+            background-color: #000000;
+            color: #C0C0C0;
+        }
+        QLabel {
+            color: #C0C0C0;
+        }
+        #close_button {
+            background-color: transparent;
+            border: none;
+            color: #e74c3c;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        #close_button:hover {
+            background-color: #c0392b;
+            color: #ffffff;
+        }
+        #title_label {
+            color: #C0C0C0;
+            font-size: 16px;
+            font-weight: 600;
+        }
+    """)
     
     # Also set icon on window (redundant but ensures it's set)
     if os.path.exists(icon_path):
