@@ -19,7 +19,7 @@ class MainWindow(QWidget):
 
         self.setWindowTitle("Sign Sync")
         self.setMinimumWidth(350)
-        self.setWindowIcon(QIcon("Logo.png"))
+        self.setWindowIcon(QIcon("mini_logo.png"))
 
         # Store current selections
         self.current_voice_index = 0  # Default to "Man" (index 0)
@@ -293,8 +293,13 @@ if __name__ == "__main__":
 
     with open("style.qss", "r") as f:
         app.setStyleSheet(f.read())
-
+    
     window = MainWindow()
+    icon = QIcon("mini_logo.ico")
+    app.setWindowIcon(icon)
+    
+    window.setWindowIcon(icon)
+
     window.show()
 
     sys.exit(app.exec())
