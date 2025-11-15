@@ -62,7 +62,7 @@ def send_prompt(prompt, model="gpt-3.5-turbo", temperature=0.7, system_message=N
     return response.choices[0].message.content
 
 
-def send_prompt_and_speak_streaming(prompt, model="gpt-4o-mini", temperature=0.7, system_message=None, voice_index=1, min_chunk_length=10):
+def send_prompt_and_speak_streaming(prompt, model="gpt-4o-mini", temperature=0.7, system_message=None, voice_index=1, min_chunk_length=10, sapi_device_index=None):
     """Send a prompt to OpenAI with streaming, collect the full response, then speak it all at once.
     
     Args:
@@ -72,6 +72,7 @@ def send_prompt_and_speak_streaming(prompt, model="gpt-4o-mini", temperature=0.7
         system_message: Optional system message to set context
         voice_index: Voice index to use for TTS (default: 1)
         min_chunk_length: Deprecated parameter, kept for backward compatibility (not used)
+        sapi_device_index: SAPI audio output device index (default: None, uses system default)
     
     Returns:
         Tuple of (full response string, timing dict with metrics:
@@ -133,7 +134,7 @@ def send_prompt_and_speak_streaming(prompt, model="gpt-4o-mini", temperature=0.7
     if full_response.strip():
         first_speech_start = time.time()
         speak_start = time.time()
-        speak_text(full_response.strip(), voice_id=_voice_id)
+        speak_text(full_response.strip(), voice_id=_voice_id, sapi_device_index=sapi_device_index)
         speak_end = time.time()
         last_speech_end = speak_end
     
