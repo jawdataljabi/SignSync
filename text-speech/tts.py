@@ -1,6 +1,5 @@
 import pyttsx3
 import sys
-import time
 
 
 def get_voice_id(voice_index=1):
