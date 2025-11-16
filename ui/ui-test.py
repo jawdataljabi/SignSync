@@ -123,6 +123,7 @@ class MainWindow(QWidget):
                 font-size: 21px;
                 font-weight: bold;
                 padding: 0px;
+                margin-right: 5px;
             }
             QPushButton#close_button:hover {
                 background-color: #c0392b;
@@ -130,6 +131,7 @@ class MainWindow(QWidget):
             }
         """)
         top_bar.addWidget(self.close_button)
+        top_bar.addSpacing(10)
         layout.addLayout(top_bar)
         
         content_layout = QVBoxLayout()
@@ -626,19 +628,6 @@ if __name__ == "__main__":
             font-size: 16px;
             padding: 8px 14px;
             border-radius: 6px;
-        }
-
-        QPushButton#close_button {
-            background-color: transparent;
-            border: none;
-            color: #e74c3c;
-            font-size: 21px;
-            font-weight: bold;
-        }
-
-        QPushButton#close_button:hover {
-            background-color: #c0392b;
-            color: #ffffff;
         }
 
         QPushButton#start_button,
