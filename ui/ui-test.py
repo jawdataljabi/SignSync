@@ -1,14 +1,13 @@
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QComboBox, QSpacerItem, QSizePolicy
+    QComboBox, QSpacerItem, QSizePolicy, QTextEdit
 )
-from PyQt6.QtGui import QIcon, QFontMetrics, QFont
+from PyQt6.QtGui import QIcon, QFontMetrics, QFont, QFontDatabase
 from PyQt6.QtCore import Qt, QPoint
 import sys
 import os
 import threading
 from qt_material import apply_stylesheet
-from PyQt6.QtGui import QFontDatabase, QFont
 
 if sys.platform == "win32":
     try:
@@ -39,15 +38,26 @@ class MainWindow(QWidget):
         
         font_metrics = QFontMetrics(self.font())
         min_width = max(
-            font_metrics.horizontalAdvance("NLP interpreter") + font_metrics.horizontalAdvance("gpt-4o-mini") + 150,
-            font_metrics.horizontalAdvance("Hear Voice Sample") + font_metrics.horizontalAdvance("External Play: ON") + 150,
-            400
+            font_metrics.horizontalAdvance("NLP interpreter") + font_metrics.horizontalAdvance("gpt-4o-mini") + 100,
+            font_metrics.horizontalAdvance("Hear Voice Sample") + font_metrics.horizontalAdvance("External Play: ON") + 100,
+            500
         )
-        min_height = max(int(font_metrics.height() * 15), 350)
+        # Calculate minimum height including transcription box
+        transcription_height = max(100, int(font_metrics.height() * 6))
+        transcription_label_height = int(font_metrics.height() * 1.5)
+        spacing = int(font_metrics.height() * 1.5)  # Spacing between START button and transcription
+        base_height = max(int(font_metrics.height() * 15), 350)
+        min_height = base_height + transcription_height + transcription_label_height + spacing
         self.setMinimumWidth(int(min_width))
         self.setMinimumHeight(min_height)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         
+        base_font = self.font()
+        if base_font.pointSize() > 0:
+            base_font.setPointSize(int(base_font.pointSize() * 1.0))
+        else:
+            base_font.setPointSize(10)
+        self.setFont(base_font)
         self.main_layout = None
 
         self.current_voice_index = 0
@@ -59,6 +69,10 @@ class MainWindow(QWidget):
         self.current_voice_id = None
         self.cable_in_device_index = None
         self.use_cable_in_for_sample = False
+        
+        # Transcription setup
+        self.transcription_textbox = None
+        self.transcription_history = []  # Store last 3 transcriptions
 
         self.init_ui()
         self.initialize_tts()
@@ -159,6 +173,24 @@ class MainWindow(QWidget):
         self.start_button.clicked.connect(self.toggle_start_button)
         self.start_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         content_layout.addWidget(self.start_button)
+
+        # Add spacing between START button and transcription box
+        transcription_spacing = max(15, int(font_metrics.height() * 1.5))
+        content_layout.addItem(QSpacerItem(int(font_metrics.height()), transcription_spacing, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum))
+
+        # Transcription text display (below START button)
+        self.transcription_label = QLabel("Transcription:")
+        self.transcription_label.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
+        self.transcription_label.hide()  # Hidden until START is pressed
+        content_layout.addWidget(self.transcription_label)
+        
+        self.transcription_textbox = QTextEdit()
+        self.transcription_textbox.setReadOnly(True)
+        transcription_height = max(100, int(font_metrics.height() * 6))
+        self.transcription_textbox.setMinimumHeight(transcription_height)
+        self.transcription_textbox.setObjectName("transcription_textbox")
+        self.transcription_textbox.hide()  # Hidden until START is pressed
+        content_layout.addWidget(self.transcription_textbox)
         layout.addLayout(content_layout)
         self.setLayout(layout)
 
@@ -338,6 +370,9 @@ class MainWindow(QWidget):
         
         device_index = self.cable_in_device_index if (self.use_cable_in_for_sample and self.cable_in_device_index) else None
         
+        # Add to transcription box
+        self.add_to_transcription_box("this is a test voice sample")
+        
         def speak_in_thread():
             try:
                 speak_text("this is a test voice sample", rate=rate, voice_id=voice_id, sapi_device_index=device_index)
@@ -373,16 +408,54 @@ class MainWindow(QWidget):
             self.external_play_button.setText("External Play: OFF")
             self.use_cable_in_for_sample = False
             self._speak_text("SignSync initialized")
+            
+            # Show transcription box
+            if self.transcription_textbox:
+                self.transcription_textbox.show()
+                self.transcription_textbox.clear()
+                self.transcription_history = []
+            if self.transcription_label:
+                self.transcription_label.show()
+            
+            # Add to transcription box
+            self.add_to_transcription_box("SignSync initialized")
         else:
             self.start_button.setObjectName("start_button")
             self.start_button.setText("START")
             self.external_play_button.hide()
             self.use_cable_in_for_sample = False
             self._speak_text("SignSync off")
+            
+            # Add to transcription box
+            self.add_to_transcription_box("SignSync off")
+            
+            # Hide transcription box
+            if self.transcription_textbox:
+                self.transcription_textbox.hide()
+                self.transcription_history = []
+            if self.transcription_label:
+                self.transcription_label.hide()
 
         self.start_button.isStart = not self.start_button.isStart
         self.start_button.style().unpolish(self.start_button)
         self.start_button.style().polish(self.start_button)
+    
+    def add_to_transcription_box(self, text):
+        """Add text to the transcription box, keeping only the last 3 additions."""
+        if not self.transcription_textbox:
+            return
+        
+        # Add new text to history
+        self.transcription_history.append(text)
+        
+        # Keep only the last 3 items
+        if len(self.transcription_history) > 3:
+            self.transcription_history.pop(0)
+        
+        # Update the textbox with the last 3 items
+        self.transcription_textbox.clear()
+        for item in self.transcription_history:
+            self.transcription_textbox.append(item)
 
 
 if __name__ == "__main__":
@@ -456,6 +529,14 @@ if __name__ == "__main__":
         QPushButton#start_button_live {
             font-size: 18px;
             font-weight: bold;
+        }
+        #transcription_textbox {
+            font-size: 14px;
+            background: #1b1b1b;
+            color: #ffffff;
+            border-radius: 8px;
+            padding: 10px;
+            border: 1px solid #333333;
         }
         """)
 
