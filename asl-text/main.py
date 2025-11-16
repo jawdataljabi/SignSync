@@ -44,10 +44,10 @@ last_stable_label = None    # previous stable label
 def handle_sentence(tokens):
     """
     Replace this with your external function.
-    For now it just prints the tokens.
+    For now it just prints the tokens with "sentence:" prefix for GUI recognition.
     """
-    print(("".join(tokens)))
-    print("Sending sentence:", tokens)
+    sentence_text = "".join(tokens)
+    print(f"sentence:{sentence_text}")
 
 # 6. Preprocessing function - must match training
 def extract_keypoints(results):
@@ -158,7 +158,8 @@ while cap.isOpened():
                 sentence_buffer.append("six-seven")
 
             # Rising edge on Gesture_0: send and clear buffer
-            #elif stable_label == 0:
+            elif stable_label == 0:
+                sentence_buffer.append("seven-eight-nine")
             elif not stable_label:
                 if sentence_buffer:
                     handle_sentence(sentence_buffer)

@@ -3,10 +3,11 @@ from PyQt6.QtWidgets import (
     QComboBox, QSpacerItem, QSizePolicy, QTextEdit
 )
 from PyQt6.QtGui import QIcon, QFontMetrics, QFont, QFontDatabase
-from PyQt6.QtCore import Qt, QPoint
+from PyQt6.QtCore import Qt, QPoint, pyqtSignal, QObject
 import sys
 import os
 import threading
+import subprocess
 from qt_material import apply_stylesheet
 
 if sys.platform == "win32":
@@ -18,10 +19,13 @@ if sys.platform == "win32":
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'text-speech'))
 from tts import speak_text, get_voice_id, find_vb_audio_device
-from openai_client import get_client
+from openai_client import get_client, send_prompt_and_speak_streaming
 
 
 class MainWindow(QWidget):
+    # Signal for handling sentences from background thread
+    sentence_received = pyqtSignal(str)
+    
     def __init__(self):
         super().__init__()
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
@@ -74,9 +78,19 @@ class MainWindow(QWidget):
         self.transcription_textbox = None
         self.transcription_history = []  # Store last 3 transcriptions
 
+        # Subprocess for ASL recognition
+        self.asl_process = None
+        self.asl_thread = None
+
         self.init_ui()
         self.initialize_tts()
         self.initialize_nlp()
+        
+        # Connect signal to handler (thread-safe GUI update)
+        self.sentence_received.connect(self.handle_line)
+        
+        # Start ASL recognition subprocess in background (always running)
+        self.start_asl_process()
 
     def init_ui(self):
         layout = QVBoxLayout()
@@ -400,6 +414,83 @@ class MainWindow(QWidget):
                 print(f"Error speaking: {e}")
         threading.Thread(target=speak, daemon=True).start()
 
+    def start_asl_process(self):
+        """Start the ASL recognition subprocess and capture its stdout."""
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        asl_main_path = os.path.join(script_dir, '..', 'asl-text', 'main.py')
+        asl_main_path = os.path.normpath(asl_main_path)
+        
+        if not os.path.exists(asl_main_path):
+            print(f"Error: ASL main.py not found at {asl_main_path}")
+            return
+        
+        try:
+            # Start the subprocess with unbuffered output
+            # Use -u flag for unbuffered output on Windows
+            self.asl_process = subprocess.Popen(
+                [sys.executable, '-u', asl_main_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                bufsize=1,
+                cwd=os.path.dirname(asl_main_path)
+            )
+            
+            # Start a thread to read stdout
+            self.asl_thread = threading.Thread(
+                target=self._read_asl_output,
+                daemon=True
+            )
+            self.asl_thread.start()
+            print("ASL recognition process started")
+        except Exception as e:
+            print(f"Error starting ASL process: {e}")
+    
+    def _read_asl_output(self):
+        """Read stdout from the ASL subprocess and process sentences."""
+        if not self.asl_process:
+            return
+        
+        try:
+            for line in iter(self.asl_process.stdout.readline, ''):
+                if line:
+                    line = line.rstrip()
+                    # Check if this is a sentence output from ASL
+                    if line.startswith("sentence:"):
+                        # Extract the sentence text (everything after "sentence:")
+                        sentence_text = line[len("sentence:"):].strip()
+                        if sentence_text:
+                            print(sentence_text)
+                            # Emit signal to handle in main thread (thread-safe)
+                            self.sentence_received.emit(sentence_text)
+                    else:
+                        # Print other output with [ASL] prefix
+                        print(f"[ASL] {line}")
+        except Exception as e:
+            print(f"Error reading ASL output: {e}")
+        finally:
+            if self.asl_process:
+                self.asl_process.stdout.close()
+    
+    def stop_asl_process(self):
+        """Stop the ASL recognition subprocess."""
+        if self.asl_process:
+            try:
+                self.asl_process.terminate()
+                # Wait a bit for graceful shutdown
+                try:
+                    self.asl_process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    # Force kill if it doesn't terminate
+                    self.asl_process.kill()
+                    self.asl_process.wait()
+                print("ASL recognition process stopped")
+            except Exception as e:
+                print(f"Error stopping ASL process: {e}")
+            finally:
+                self.asl_process = None
+                self.asl_thread = None
+
     def toggle_start_button(self):
         if self.start_button.isStart:
             self.start_button.setObjectName("start_button_live")
@@ -456,6 +547,31 @@ class MainWindow(QWidget):
         self.transcription_textbox.clear()
         for item in self.transcription_history:
             self.transcription_textbox.append(item)
+    
+    def handle_line(self, sentence_text):
+        """Handle a sentence line from ASL recognition."""
+        # Only process if SignSync is ON (button shows "LIVE", not "START")
+        if self.start_button.isStart:
+            return
+        
+        # Add to transcription box
+        self.add_to_transcription_box(sentence_text)
+        
+        # Run API call and TTS in background thread to avoid blocking UI
+        def process_and_speak():
+            try:
+                send_prompt_and_speak_streaming(sentence_text, voice_index=self.current_voice_index, sapi_device_index=self.cable_in_device_index)
+            except Exception as e:
+                print(f"Error processing and speaking: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        threading.Thread(target=process_and_speak, daemon=True).start()
+    
+    def closeEvent(self, event):
+        """Handle window close event - cleanup subprocess."""
+        self.stop_asl_process()
+        event.accept()
 
 
 if __name__ == "__main__":

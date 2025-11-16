@@ -1,5 +1,6 @@
 import pyttsx3
 import sys
+import threading
 
 # Try to import comtypes for SAPI device selection
 try:
@@ -11,6 +12,9 @@ except ImportError:
 # Cache for VB-Audio device index (searched once at module load)
 _VB_AUDIO_DEVICE_INDEX = None
 _VB_AUDIO_SEARCHED = False
+
+# Lock to ensure only one TTS operation at a time (prevents "run loop already started" error)
+_tts_lock = threading.Lock()
 
 
 def find_vb_audio_device():
@@ -128,47 +132,49 @@ def speak_text(text, rate=160, volume=0.9, voice_id=None, sapi_device_index=None
         voice_id: Voice ID to use (default: None, uses default voice)
         sapi_device_index: SAPI audio output device index (default: None, auto-finds VB-Audio or uses default)
     """
-    # Create a new engine instance for each utterance to avoid Windows pyttsx3 issues
-    engine = pyttsx3.init()
-    engine.setProperty("rate", rate)
-    engine.setProperty("volume", volume)
-    if voice_id:
-        engine.setProperty("voice", voice_id)
-    
-    # Set SAPI audio output device (only if explicitly specified)
-    # If sapi_device_index is None, use system default (don't set a specific device)
-    if COMTYPES_AVAILABLE and sapi_device_index is not None:
-        try:
-            print(f"[DEBUG] Using explicitly specified SAPI device at index {sapi_device_index}", 
-                  file=sys.stderr, flush=True)
-            
-            # Get SAPI audio output tokens using comtypes
-            category = comtypes.client.CreateObject("SAPI.SpObjectTokenCategory")
-            category.SetId("HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Speech\\AudioOutput", False)
-            tokens = category.EnumerateTokens()
-            
-            if 0 <= sapi_device_index < tokens.Count:
-                selected_token = tokens.Item(sapi_device_index)
-                device_description = selected_token.GetDescription()
-                print(f"[DEBUG] Setting SAPI device: [{sapi_device_index}] {device_description}", 
+    # Use lock to ensure only one TTS operation at a time (prevents "run loop already started" error)
+    with _tts_lock:
+        # Create a new engine instance for each utterance to avoid Windows pyttsx3 issues
+        engine = pyttsx3.init()
+        engine.setProperty("rate", rate)
+        engine.setProperty("volume", volume)
+        if voice_id:
+            engine.setProperty("voice", voice_id)
+        
+        # Set SAPI audio output device (only if explicitly specified)
+        # If sapi_device_index is None, use system default (don't set a specific device)
+        if COMTYPES_AVAILABLE and sapi_device_index is not None:
+            try:
+                print(f"[DEBUG] Using explicitly specified SAPI device at index {sapi_device_index}", 
                       file=sys.stderr, flush=True)
-                # Access the SAPI Voice object and set AudioOutput
-                voice = engine.proxy._driver._tts
-                voice.AudioOutput = selected_token
-                print("[DEBUG] SAPI device set successfully", file=sys.stderr, flush=True)
-            else:
-                print(f"[DEBUG] Warning: Device index {sapi_device_index} out of range (0-{tokens.Count-1}), using default", 
+                
+                # Get SAPI audio output tokens using comtypes
+                category = comtypes.client.CreateObject("SAPI.SpObjectTokenCategory")
+                category.SetId("HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Speech\\AudioOutput", False)
+                tokens = category.EnumerateTokens()
+                
+                if 0 <= sapi_device_index < tokens.Count:
+                    selected_token = tokens.Item(sapi_device_index)
+                    device_description = selected_token.GetDescription()
+                    print(f"[DEBUG] Setting SAPI device: [{sapi_device_index}] {device_description}", 
+                          file=sys.stderr, flush=True)
+                    # Access the SAPI Voice object and set AudioOutput
+                    voice = engine.proxy._driver._tts
+                    voice.AudioOutput = selected_token
+                    print("[DEBUG] SAPI device set successfully", file=sys.stderr, flush=True)
+                else:
+                    print(f"[DEBUG] Warning: Device index {sapi_device_index} out of range (0-{tokens.Count-1}), using default", 
+                          file=sys.stderr, flush=True)
+            except Exception as e:
+                # If device selection fails, continue with default device
+                print(f"[DEBUG] Warning: Could not set SAPI device: {e}", 
                       file=sys.stderr, flush=True)
-        except Exception as e:
-            # If device selection fails, continue with default device
-            print(f"[DEBUG] Warning: Could not set SAPI device: {e}", 
-                  file=sys.stderr, flush=True)
-            import traceback
-            traceback.print_exc(file=sys.stderr)
-    
-    engine.say(text)
-    engine.runAndWait()
-    del engine
+                import traceback
+                traceback.print_exc(file=sys.stderr)
+        
+        engine.say(text)
+        engine.runAndWait()
+        del engine
 
 
 def main():
