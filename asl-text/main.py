@@ -3,6 +3,9 @@ import mediapipe as mp
 import numpy as np
 import tensorflow as tf
 import pyvirtualcam
+import sys
+import os
+import threading
 
 # 1. Initialize MediaPipe Holistic and OpenCV VideoCapture
 mp_holistic = mp.solutions.holistic
@@ -19,6 +22,13 @@ cap = cv2.VideoCapture(0)
 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 fps = int(cap.get(cv2.CAP_PROP_FPS) or 30)
+
+# Check command-line argument for showing camera (default state)
+SHOW_CAMERA = "--show-camera" in sys.argv or os.getenv("SHOW_CAMERA", "0") == "1"
+# Thread-safe flag for camera display
+camera_lock = threading.Lock()
+# Track previous state to detect transitions
+prev_show_camera = SHOW_CAMERA
 
 # 2. Load your trained 1D CNN model
 model = tf.keras.models.load_model("best_cnn_asl_model.keras")
@@ -74,6 +84,32 @@ def handle_sentence(tokens):
     print("sentence:" + " ".join(tokens))
 
 
+def read_stdin_commands():
+    """Read commands from stdin in a separate thread."""
+    global SHOW_CAMERA
+    while True:
+        try:
+            # Read from stdin (blocking read works for subprocess stdin)
+            line = sys.stdin.readline()
+            
+            if not line:
+                # EOF reached
+                break
+            
+            line = line.strip().lower()
+            if line == "show_camera":
+                with camera_lock:
+                    SHOW_CAMERA = True
+            elif line == "hide_camera":
+                with camera_lock:
+                    SHOW_CAMERA = False
+        except (EOFError, KeyboardInterrupt):
+            break
+        except Exception as e:
+            # Silently ignore errors to keep the thread running
+            pass
+
+
 
 # 6. Preprocessing function - must match training
 # Model expects 63 features (21 hand landmarks * 3 coordinates)
@@ -122,11 +158,18 @@ def extract_keypoints(results):
     return hand_keypoints  # Returns 63 features (format depends on PREPROCESSING_MODE)
 
 
-# 7. Live loop
+# 7. Start stdin reader thread
+stdin_thread = threading.Thread(target=read_stdin_commands, daemon=True)
+stdin_thread.start()
+
+# 8. Live loop
 try:
     with pyvirtualcam.Camera(width=width, height=height, fps=fps) as cam:
         print("Virtual camera:", cam.device)
         print("Press Ctrl+C to exit")
+        
+        # Use local variable to track previous state in loop
+        local_prev_show_camera = prev_show_camera
         
         while cap.isOpened():
             ret, frame = cap.read()
@@ -192,29 +235,6 @@ try:
                 smoothed_probs = np.mean(predictions_buffer, axis=0)
                 best_class = int(np.argmax(smoothed_probs))
                 best_conf = float(smoothed_probs[best_class])
-                
-                # Debug: Print top 3 predictions and class distribution every 60 frames
-                if frame_index % 60 == 0:
-                    top3_indices = np.argsort(smoothed_probs)[-3:][::-1]
-                    print(f"\nTop 3 predictions (frame {frame_index}):")
-                    for idx in top3_indices:
-                        print(f"  Class {idx}: {smoothed_probs[idx]:.4f}")
-                    
-                    # Show all classes with probability > 0.01
-                    significant_classes = [(i, smoothed_probs[i]) for i in range(29) if smoothed_probs[i] > 0.01]
-                    significant_classes.sort(key=lambda x: x[1], reverse=True)
-                    if len(significant_classes) > 3:
-                        print(f"  Other significant classes (>0.01): {[(c, f'{p:.4f}') for c, p in significant_classes[3:10]]}")
-                    
-                    # Show class distribution summary
-                    active_classes = sum(1 for p in smoothed_probs if p > 0.01)
-                    max_prob = smoothed_probs.max()
-                    min_prob = smoothed_probs.min()
-                    print(f"  Class distribution: {active_classes}/29 classes > 0.01, max={max_prob:.4f}, min={min_prob:.4f}")
-                    
-                    print(f"  Keypoints range: [{keypoints.min():.4f}, {keypoints.max():.4f}]")
-                    print(f"  Keypoints mean: {keypoints.mean():.4f}, std: {keypoints.std():.4f}")
-                    print(f"  Keypoints abs max: {np.abs(keypoints).max():.4f}")
 
                 # Either show a gesture or "no gesture" based on confidence
                 if best_conf >= CONFIDENCE_THRESHOLD:
@@ -255,13 +275,6 @@ try:
                                 else:
                                     print(f"Skipped duplicate: {letter} (already in buffer)")
                     
-                    # Falling edge: send and clear buffer (optional - comment out if you want continuous buffer)
-                    # elif stable_label is None:
-                    #     if sentence_buffer:
-                    #         handle_sentence(sentence_buffer)
-                    #         sentence_buffer.clear()
-                    #         print(f"Buffer cleared")
-                    
                     # Update last_stable_label after handling edges
                     last_stable_label = stable_label
 
@@ -289,21 +302,6 @@ try:
                 color,
                 2,
             )
-            
-            # Show top 3 predictions for debugging
-            if len(predictions_buffer) > 0:
-                smoothed_probs = np.mean(predictions_buffer, axis=0)
-                top3_indices = np.argsort(smoothed_probs)[-3:][::-1]
-                top3_text = "Top 3: " + ", ".join([f"{CLASS_LABELS.get(i, f'C{i}')}({smoothed_probs[i]:.2f})" for i in top3_indices])
-                cv2.putText(
-                    frame,
-                    top3_text,
-                    (10, 70),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (255, 255, 0),
-                    2,
-                )
 
             # Show the buffer contents
             buffer_text = "Buffer: " + " ".join(str(t) for t in sentence_buffer)
@@ -317,12 +315,25 @@ try:
                 2,
             )
 
-            # Display the frame in a window
-            # cv2.imshow("ASL Gesture Recognition", frame)
+            # Display the frame in a window (if enabled) - check with lock
+            with camera_lock:
+                show_camera = SHOW_CAMERA
             
-            # Check for 'q' key to exit
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
+            # Check if state changed (camera was just turned off)
+            if local_prev_show_camera and not show_camera:
+                # Camera was just turned off - close the window once
+                try:
+                    cv2.destroyWindow("ASL Gesture Recognition")
+                except:
+                    pass
+            local_prev_show_camera = show_camera
+            
+            if show_camera:
+                cv2.imshow("ASL Gesture Recognition", frame)
+                # Check for 'q' key to exit (only if camera window is shown)
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
+
 except KeyboardInterrupt:
     print("\nExiting...")
 finally:

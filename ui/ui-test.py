@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QComboBox, QSpacerItem, QSizePolicy, QTextEdit
+    QComboBox, QSpacerItem, QSizePolicy, QTextEdit, QCheckBox
 )
 from PyQt6.QtGui import QIcon, QFontMetrics, QFont, QFontDatabase
 from PyQt6.QtCore import Qt, QPoint, pyqtSignal, QObject
@@ -81,6 +81,7 @@ class MainWindow(QWidget):
         # Subprocess for ASL recognition
         self.asl_process = None
         self.asl_thread = None
+        self.show_camera = False  # Camera display toggle
 
         self.init_ui()
         self.initialize_tts()
@@ -177,6 +178,15 @@ class MainWindow(QWidget):
         nlp_layout, self.nlp_dropdown = self.create_dropdown("NLP interpreter", ["None", "gpt-3.5-turbo", "gpt-4o-mini"], self.on_nlp_changed)
         self.nlp_dropdown.setCurrentText("gpt-4o-mini")
         content_layout.addLayout(nlp_layout)
+        
+        # Camera display checkbox
+        camera_checkbox_layout = QHBoxLayout()
+        self.camera_checkbox = QCheckBox("Show Camera")
+        self.camera_checkbox.setChecked(False)
+        self.camera_checkbox.stateChanged.connect(self.on_camera_checkbox_changed)
+        camera_checkbox_layout.addWidget(self.camera_checkbox)
+        camera_checkbox_layout.addStretch()
+        content_layout.addLayout(camera_checkbox_layout)
 
         spacer_height = max(20, int(font_metrics.height() * 2))
         content_layout.addItem(QSpacerItem(int(font_metrics.height()), spacer_height, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding))
@@ -340,6 +350,21 @@ class MainWindow(QWidget):
     def on_nlp_changed(self, value):
         self.current_nlp_model = None if value == "None" else value
     
+    def on_camera_checkbox_changed(self, state):
+        """Handle camera checkbox toggle - send command via stdin."""
+        # state is 0 for unchecked, 2 for checked
+        self.show_camera = (state == 2)
+        # Send command to ASL process via stdin
+        if self.asl_process and self.asl_process.stdin:
+            try:
+                if self.show_camera:
+                    self.asl_process.stdin.write("show_camera\n")
+                else:
+                    self.asl_process.stdin.write("hide_camera\n")
+                self.asl_process.stdin.flush()
+            except Exception as e:
+                print(f"Error sending camera command: {e}")
+    
     def get_nlp_model(self):
         return self.current_nlp_model if self.current_nlp_model else "gpt-4o-mini"
 
@@ -429,9 +454,15 @@ class MainWindow(QWidget):
         try:
             # Start the subprocess with unbuffered output
             # Use -u flag for unbuffered output on Windows
+            cmd = [sys.executable, '-u', asl_main_path]
+            # Add --show-camera flag if checkbox is checked (initial state)
+            if self.show_camera:
+                cmd.append('--show-camera')
+            
             self.asl_process = subprocess.Popen(
-                [sys.executable, '-u', asl_main_path],
+                cmd,
                 stdout=subprocess.PIPE,
+                stdin=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 universal_newlines=True,
                 bufsize=1,
