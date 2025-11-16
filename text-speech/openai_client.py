@@ -81,6 +81,32 @@ def send_prompt_and_speak_streaming(prompt, model="gpt-4o-mini", temperature=0.7
     Raises:
         ValueError: If the model is invalid and cannot be defaulted
     """
+    # Check if prompt is a single word - if so, just repeat it
+    words = prompt.strip().split()
+    if len(words) == 1:
+        # Single word - just speak it directly without API call
+        api_call_start = time.time()
+        first_speech_start = time.time()
+        speak_start = time.time()
+        
+        # Get voice ID from the passed voice_index
+        current_voice_id = get_voice_id(voice_index)
+        speak_text(prompt.strip(), rate=rate, voice_id=current_voice_id, sapi_device_index=sapi_device_index)
+        
+        speak_end = time.time()
+        last_speech_end = speak_end
+        function_end = time.time()
+        
+        # Return timing metrics for single word case
+        timing = {
+            'api_first_token_ms': None,
+            'api_total_ms': None,
+            'api_to_speech_start_ms': round((first_speech_start - api_call_start) * 1000, 2),
+            'speaking_total_ms': round((speak_end - speak_start) * 1000, 2),
+            'function_total_ms': round((function_end - api_call_start) * 1000, 2)
+        }
+        return prompt.strip(), timing
+    
     # Validate and default model if necessary
     if model is None or not is_valid_model(model):
         if model is not None:

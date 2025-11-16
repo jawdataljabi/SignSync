@@ -9,8 +9,8 @@ mp_holistic = mp.solutions.holistic
 mp_draw = mp.solutions.drawing_utils
 
 holistic = mp_holistic.Holistic(
-    min_detection_confidence=0.7,
-    min_tracking_confidence=0.7,
+    min_detection_confidence=0.6,
+    min_tracking_confidence=0.6,
 )
 
 cap = cv2.VideoCapture(0)
@@ -20,24 +20,42 @@ width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 fps = int(cap.get(cv2.CAP_PROP_FPS) or 30)
 
-# 2. Load your trained LSTM model
-model = tf.keras.models.load_model("good4.keras")
+# 2. Load your trained 1D CNN model
+model = tf.keras.models.load_model("best_cnn_asl_model.keras")
 
-# Map class indices to labels (adjust to your training)
+# Map class indices to labels (custom mappings)
 CLASS_LABELS = {
-    0: "Gesture_0",  # treat as "send"
-    1: "Gesture_1",  # treat as "word"
-    # add more if needed
+    # Custom word mappings
+    0: "Reset",      # A
+    1: "Hello",      # B
+    4: "You",        # E
+    6: "Class",      # G
+    7: "In",         # H
+    8: "Good",       # I
+    9: "How",        # J
+    11: "No",        # L
+    14: "Yes",       # O
+    17: "Love",      # R
+    18: "EOS",       # S
+    20: "Thank You", # U
+    23: "Me",        # X
+    24: "Goodbye",   # Y
+    # Unmapped classes will show as "Class_X"
 }
 
-# 3. Sequence buffer for frames
-sequence_length = 86
-sequence = []
+# 3. No sequence buffer needed - this is a single-frame 1D CNN model
+
+# Preprocessing options - try different combinations if model doesn't work well
+# ASL Alphabet models often use raw MediaPipe coordinates (normalized 0-1) without centering
+PREPROCESSING_MODE = "centered_scaled"  # Options: "raw", "centered", "centered_scaled"
+# "raw" = Use MediaPipe coordinates as-is (normalized 0-1)
+# "centered" = Center relative to wrist (current)
+# "centered_scaled" = Center and normalize by hand size
 
 # 4. Inference and smoothing parameters
-PREDICTION_STRIDE = 2        # run model every 2 frames (~15 Hz at 30 fps)
-SMOOTHING_WINDOW = 10        # number of recent predictions to average
-CONFIDENCE_THRESHOLD = 0.7   # minimum probability to show a gesture
+PREDICTION_STRIDE = 1        # run model every frame for faster response (~30 Hz at 30 fps)
+SMOOTHING_WINDOW = 5         # smaller window for quicker updates (reduced from 10)
+CONFIDENCE_THRESHOLD = 0.6   # minimum probability to show a gesture
 
 predictions_buffer = []      # last SMOOTHING_WINDOW prob vectors
 stable_label = None          # label we display
@@ -53,41 +71,55 @@ def handle_sentence(tokens):
     Replace this with your external function.
     For now it just prints the tokens.
     """
-    print("sentence:" + "".join(tokens))
+    print("sentence:" + " ".join(tokens))
 
 
 
 # 6. Preprocessing function - must match training
+# Model expects 63 features (21 hand landmarks * 3 coordinates)
 def extract_keypoints(results):
-    # Pose: 33 landmarks, each (x, y, z, visibility)
-    pose = np.zeros(33 * 4, dtype=np.float32)
-    if results.pose_landmarks:
-        pose = np.array(
-            [[lm.x, lm.y, lm.z, lm.visibility]
-             for lm in results.pose_landmarks.landmark],
-            dtype=np.float32,
-        ).flatten()
-
-    # Left hand: 21 landmarks, each (x, y, z)
-    lh = np.zeros(21 * 3, dtype=np.float32)
-    if results.left_hand_landmarks:
-        lh = np.array(
-            [[lm.x, lm.y, lm.z]
-             for lm in results.left_hand_landmarks.landmark],
-            dtype=np.float32,
-        ).flatten()
-
-    # Right hand: 21 landmarks, each (x, y, z)
-    rh = np.zeros(21 * 3, dtype=np.float32)
+    # Extract hand keypoints (prefer right hand, fallback to left hand)
+    hand_keypoints = np.zeros(21 * 3, dtype=np.float32)  # 63 features
+    hand_landmarks = None
+    
+    # Try right hand first
     if results.right_hand_landmarks:
-        rh = np.array(
+        hand_landmarks = results.right_hand_landmarks
+    # Fallback to left hand if right hand not detected
+    elif results.left_hand_landmarks:
+        hand_landmarks = results.left_hand_landmarks
+    
+    if hand_landmarks:
+        # Extract raw coordinates from MediaPipe (already normalized 0-1)
+        raw_keypoints = np.array(
             [[lm.x, lm.y, lm.z]
-             for lm in results.right_hand_landmarks.landmark],
+             for lm in hand_landmarks.landmark],
             dtype=np.float32,
-        ).flatten()
-
-    # Final per-frame feature vector length = 258 (132 pose + 63 LH + 63 RH)
-    return np.concatenate([pose, lh, rh], axis=0)
+        )
+        
+        if PREPROCESSING_MODE == "raw":
+            # Use raw MediaPipe coordinates (normalized 0-1) - most common for ASL models
+            hand_keypoints = raw_keypoints.flatten()
+        elif PREPROCESSING_MODE == "centered":
+            # Center coordinates relative to wrist (landmark 0)
+            wrist = raw_keypoints[0]  # Wrist is landmark 0
+            centered = raw_keypoints - wrist
+            hand_keypoints = centered.flatten()
+        elif PREPROCESSING_MODE == "centered_scaled":
+            # Center and normalize by hand size
+            wrist = raw_keypoints[0]  # Wrist is landmark 0
+            centered = raw_keypoints - wrist
+            # Normalize by maximum distance from wrist (hand size)
+            distances = np.linalg.norm(centered, axis=1)
+            max_dist = np.max(distances)
+            if max_dist > 0:
+                centered = centered / max_dist
+            hand_keypoints = centered.flatten()
+        else:
+            # Default to raw
+            hand_keypoints = raw_keypoints.flatten()
+    
+    return hand_keypoints  # Returns 63 features (format depends on PREPROCESSING_MODE)
 
 
 # 7. Live loop
@@ -100,7 +132,9 @@ try:
             ret, frame = cap.read()
             if not ret:
                 break
-            cam.send(frame)
+            # Convert BGR to RGB for virtual camera and send it
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            cam.send(frame_rgb)
             cam.sleep_until_next_frame()
 
             frame = cv2.flip(frame, 1)
@@ -131,21 +165,23 @@ try:
                     mp_holistic.HAND_CONNECTIONS,
                 )
 
-            # Extract keypoints and update sequence buffer
+            # Extract keypoints (63 features for one hand)
             keypoints = extract_keypoints(results)
-            sequence.append(keypoints)
-            if len(sequence) > sequence_length:
-                sequence.pop(0)
+            
+            # Check if we have hand keypoints
+            hand_detected = np.any(keypoints != 0)
 
             frame_index += 1
 
-            # Only run prediction when we have a full window and match the stride
-            if len(sequence) == sequence_length and frame_index % PREDICTION_STRIDE == 0:
-                sequence_input = np.array(sequence, dtype=np.float32).reshape(
-                    1, sequence_length, 258,
-                )
+            # Initialize stable_label for this frame (use last value if no new prediction)
+            stable_label = last_stable_label
+            
+            # Run prediction based on stride and if hand is detected
+            if hand_detected and frame_index % PREDICTION_STRIDE == 0:
+                # Reshape to (1, 63, 1) for 1D CNN model
+                model_input = keypoints.reshape(1, 63, 1).astype(np.float32)
 
-                raw_probs = model.predict(sequence_input, verbose=0)[0]  # (num_classes,)
+                raw_probs = model.predict(model_input, verbose=0)[0]  # (num_classes,)
 
                 # Update buffer of recent probability vectors
                 predictions_buffer.append(raw_probs)
@@ -156,6 +192,29 @@ try:
                 smoothed_probs = np.mean(predictions_buffer, axis=0)
                 best_class = int(np.argmax(smoothed_probs))
                 best_conf = float(smoothed_probs[best_class])
+                
+                # Debug: Print top 3 predictions and class distribution every 60 frames
+                if frame_index % 60 == 0:
+                    top3_indices = np.argsort(smoothed_probs)[-3:][::-1]
+                    print(f"\nTop 3 predictions (frame {frame_index}):")
+                    for idx in top3_indices:
+                        print(f"  Class {idx}: {smoothed_probs[idx]:.4f}")
+                    
+                    # Show all classes with probability > 0.01
+                    significant_classes = [(i, smoothed_probs[i]) for i in range(29) if smoothed_probs[i] > 0.01]
+                    significant_classes.sort(key=lambda x: x[1], reverse=True)
+                    if len(significant_classes) > 3:
+                        print(f"  Other significant classes (>0.01): {[(c, f'{p:.4f}') for c, p in significant_classes[3:10]]}")
+                    
+                    # Show class distribution summary
+                    active_classes = sum(1 for p in smoothed_probs if p > 0.01)
+                    max_prob = smoothed_probs.max()
+                    min_prob = smoothed_probs.min()
+                    print(f"  Class distribution: {active_classes}/29 classes > 0.01, max={max_prob:.4f}, min={min_prob:.4f}")
+                    
+                    print(f"  Keypoints range: [{keypoints.min():.4f}, {keypoints.max():.4f}]")
+                    print(f"  Keypoints mean: {keypoints.mean():.4f}, std: {keypoints.std():.4f}")
+                    print(f"  Keypoints abs max: {np.abs(keypoints).max():.4f}")
 
                 # Either show a gesture or "no gesture" based on confidence
                 if best_conf >= CONFIDENCE_THRESHOLD:
@@ -165,44 +224,93 @@ try:
 
                 # 8. Sentence logic: edge detection on stable_label
                 if stable_label != last_stable_label:
-                    # Rising edge on Gesture_1: add a token to buffer
-                    if stable_label == 1:
-                        # You can push whatever token you want: class index, label string, etc.
-                        sentence_buffer.append("six-seven")
-
-                    # Rising edge on Gesture_0 or None: send and clear buffer
-                    # elif stable_label == 0:
-                    elif not stable_label:
-                        if sentence_buffer:
-                            handle_sentence(sentence_buffer)
-                            sentence_buffer.clear()
-
+                    # Rising edge: add a letter/token to buffer (only if not already in buffer)
+                    if stable_label is not None:
+                        # Check if class is in CLASS_LABELS - skip if unknown
+                        if stable_label not in CLASS_LABELS:
+                            print(f"Skipped unknown class: {stable_label}")
+                        else:
+                            letter = CLASS_LABELS[stable_label]
+                            
+                            # Special handling for "Reset" - clear the buffer
+                            if letter == "Reset":
+                                if sentence_buffer:
+                                    print(f"Buffer cleared (reset detected): {sentence_buffer}")
+                                    sentence_buffer.clear()
+                                else:
+                                    print("Reset detected (buffer already empty)")
+                            # Special handling for "EOS" - send buffer to stdout and clear
+                            elif letter == "EOS":
+                                if sentence_buffer:
+                                    handle_sentence(sentence_buffer)
+                                    sentence_buffer.clear()
+                                    print("Buffer sent to stdout and cleared (EOS detected)")
+                                else:
+                                    print("EOS detected (buffer already empty)")
+                            else:
+                                # Only append if word doesn't already exist in buffer
+                                if letter not in sentence_buffer:
+                                    sentence_buffer.append(letter)
+                                    print(f"Buffer updated: {sentence_buffer}")
+                                else:
+                                    print(f"Skipped duplicate: {letter} (already in buffer)")
+                    
+                    # Falling edge: send and clear buffer (optional - comment out if you want continuous buffer)
+                    # elif stable_label is None:
+                    #     if sentence_buffer:
+                    #         handle_sentence(sentence_buffer)
+                    #         sentence_buffer.clear()
+                    #         print(f"Buffer cleared")
+                    
                     # Update last_stable_label after handling edges
                     last_stable_label = stable_label
 
             # Display the current stable label or "no gesture"
             if stable_label is None:
-                label_str = "..."
+                label_str = "No hand / Low confidence"
+                color = (0, 0, 255)  # Red
+                conf_str = ""
             else:
-                label_str = CLASS_LABELS.get(stable_label, str(stable_label))
+                label_str = CLASS_LABELS.get(stable_label, f"Class_{stable_label}")
+                color = (0, 255, 0)  # Green
+                if len(predictions_buffer) > 0:
+                    smoothed_probs = np.mean(predictions_buffer, axis=0)
+                    conf_str = f" ({smoothed_probs[stable_label]:.2f})"
+                else:
+                    conf_str = ""
 
-            label_text = f"Prediction: {label_str}"
+            label_text = f"Prediction: {label_str}{conf_str}"
             cv2.putText(
                 frame,
                 label_text,
                 (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 1,
-                (0, 255, 0),
+                color,
                 2,
             )
+            
+            # Show top 3 predictions for debugging
+            if len(predictions_buffer) > 0:
+                smoothed_probs = np.mean(predictions_buffer, axis=0)
+                top3_indices = np.argsort(smoothed_probs)[-3:][::-1]
+                top3_text = "Top 3: " + ", ".join([f"{CLASS_LABELS.get(i, f'C{i}')}({smoothed_probs[i]:.2f})" for i in top3_indices])
+                cv2.putText(
+                    frame,
+                    top3_text,
+                    (10, 70),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (255, 255, 0),
+                    2,
+                )
 
-            # Show the buffer contents for debugging
+            # Show the buffer contents
             buffer_text = "Buffer: " + " ".join(str(t) for t in sentence_buffer)
             cv2.putText(
                 frame,
                 buffer_text,
-                (10, 70),
+                (10, 110),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
                 (0, 255, 255),
@@ -210,10 +318,7 @@ try:
             )
 
             # Display the frame in a window
-            cv2.imshow("ASL Gesture Recognition", frame)
-            
-            # Convert BGR to RGB for virtual camera
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # cv2.imshow("ASL Gesture Recognition", frame)
             
             # Check for 'q' key to exit
             if cv2.waitKey(1) & 0xFF == ord("q"):
