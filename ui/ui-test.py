@@ -8,6 +8,7 @@ import sys
 import os
 import threading
 from qt_material import apply_stylesheet
+from PyQt6.QtGui import QFontDatabase, QFont
 
 if sys.platform == "win32":
     try:
@@ -47,12 +48,6 @@ class MainWindow(QWidget):
         self.setMinimumHeight(min_height)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         
-        base_font = self.font()
-        if base_font.pointSize() > 0:
-            base_font.setPointSize(int(base_font.pointSize() * 1.0))
-        else:
-            base_font.setPointSize(10)
-        self.setFont(base_font)
         self.main_layout = None
 
         self.current_voice_index = 0
@@ -280,7 +275,6 @@ class MainWindow(QWidget):
         dropdown.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         
         font = dropdown.font()
-        font.setPointSize(int(font.pointSize() * 1.0))
         dropdown.setFont(font)
         label.setFont(font)
         
@@ -401,33 +395,70 @@ if __name__ == "__main__":
         app.setWindowIcon(QIcon(icon_path))
 
     apply_stylesheet(app, theme="dark_red.xml")
+
+    font_path = os.path.join(script_dir, "open_sans.ttf")
+    if os.path.exists(font_path):
+        font_id = QFontDatabase.addApplicationFont(font_path)
+        if font_id != -1:
+            font_family = QFontDatabase.applicationFontFamilies(font_id)[0]
+            app.setFont(QFont(font_family, 30))
+        else:
+            print("Failed to load Open Sans font.")
+    else:
+        print("open_sans.ttf not found!")
     
     window = MainWindow()
     window.setStyleSheet("""
         QWidget {
             background-color: #000000;
             color: #C0C0C0;
+            font-family: 'Open Sans';
+            font-size: 18px;
         }
+
         QLabel {
             color: #C0C0C0;
         }
-        #close_button {
+
+        QLabel#title_label {
+            font-size: 20px;
+            font-weight: 600;
+        }
+
+        QComboBox {
+            background-color: #1a1a1a;
+            color: #ffffff;
+            padding: 6px;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        QPushButton {
+            font-size: 16px;
+            padding: 8px 14px;
+            border-radius: 6px;
+        }
+
+        QPushButton#close_button {
             background-color: transparent;
             border: none;
             color: #e74c3c;
-            font-size: 24px;
+            font-size: 21px;
             font-weight: bold;
         }
-        #close_button:hover {
+
+        QPushButton#close_button:hover {
             background-color: #c0392b;
             color: #ffffff;
         }
-        #title_label {
-            color: #C0C0C0;
-            font-size: 16px;
-            font-weight: 600;
+
+        QPushButton#start_button,
+        QPushButton#start_button_live {
+            font-size: 18px;
+            font-weight: bold;
         }
-    """)
+        """)
+
     
     if os.path.exists(icon_path):
         window.setWindowIcon(QIcon(icon_path))
