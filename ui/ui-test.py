@@ -555,7 +555,7 @@ class MainWindow(QWidget):
         # Only process if SignSync is ON (button shows "LIVE", not "START")
         if self.start_button.isStart:
             return
-        
+
         # Add to transcription box
         self.add_to_transcription_box(sentence_text)
         
