@@ -10,7 +10,7 @@ _voice_id = None
 
 # Prefix to prepend to all prompts
 # Using a clear structure to separate instruction from user input
-PROMPT_PREFIX = "You are a text clarity assistant. Your task is to rewrite the user's sentence to be clearer and more understandable. Respond with exactly one improved sentence, nothing else.\n\nUser's sentence to rewrite: "
+PROMPT_PREFIX = "You are a text clarity assistant. Your task is to ALWAYS rewrite the user's sentence to be clearer and more understandable. CRITICAL: You must NEVER return the original text unchanged, even if it seems clear. You must ALWAYS provide a rewritten version with improved clarity. Do not echo back the input. Do not return the same words in any form. Respond with exactly one improved sentence, nothing else.\n\nUser's sentence to rewrite: "
 
 # Valid OpenAI models
 VALID_MODELS = {
